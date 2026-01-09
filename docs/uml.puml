@@ -1,0 +1,227 @@
+@startuml Church Media Scheduler - Class Diagram
+
+skinparam classAttributeIconSize 0
+skinparam class {
+    BackgroundColor<<Entity>> LightBlue
+    BackgroundColor<<ValueObject>> LightYellow
+    BackgroundColor<<Service>> LightGreen
+}
+
+' Entidades principais
+class Colaborador <<Entity>> {
+    - id: UUID
+    - nome: String
+    - email: String
+    - whatsapp: String
+    - cpf: String
+    - horariosDisponibilidade: List<HorarioDisponibilidade>
+    - setores: List<Setor>
+    - tipoColaborador: TipoColaborador
+    - ativo: Boolean
+    - usuario: Usuario
+    --
+    + adicionarDisponibilidade(horario)
+    + removerDisponibilidade(horario)
+    + estaDisponivelEm(diaSemana, horario): Boolean
+    + adicionarSetor(setor)
+    + removerSetor(setor)
+}
+
+class Culto <<Entity>> {
+    - id: UUID
+    - diaSemana: DiaSemana
+    - horario: Time
+    - ativo: Boolean
+    --
+    + conflitaCom(outroCulto): Boolean
+}
+
+class Setor <<Entity>> {
+    - id: UUID
+    - nome: String
+    - descricao: String
+    - ativo: Boolean
+    --
+    + validarNome(): Boolean
+}
+
+class Escala <<Entity>> {
+    - id: UUID
+    - mesReferencia: YearMonth
+    - anoReferencia: Integer
+    - dataGeracao: DateTime
+    - alocacoes: List<Alocacao>
+    - status: StatusEscala
+    - dataAprovacao: DateTime
+    --
+    + adicionarAlocacao(alocacao)
+    + removerAlocacao(alocacao)
+    + aprovar()
+    + gerarRelatorio(): EscalaRelatorio
+    - validarDistribuicaoEquitativa(): Boolean
+}
+
+class Alocacao <<Entity>> {
+    - id: UUID
+    - escala: Escala
+    - colaborador: Colaborador
+    - culto: Culto
+    - setor: Setor
+    - data: LocalDate
+    - confirmado: Boolean
+    - notificado: Boolean
+    --
+    + confirmar()
+    + notificar()
+    + validar(): Boolean
+}
+
+class Usuario <<Entity>> {
+    - id: UUID
+    - username: String
+    - senha: String (hash)
+    - papel: PapelUsuario
+    - colaborador: Colaborador
+    - ativo: Boolean
+    - ultimoAcesso: DateTime
+    --
+    + autenticar(senha): Boolean
+    + alterarSenha(novaSenha)
+    + ehGestor(): Boolean
+}
+
+' Value Objects
+class HorarioDisponibilidade <<ValueObject>> {
+    - diaSemana: DiaSemana
+    - horarioInicio: Time
+    - horarioFim: Time
+    --
+    + contemHorario(horario): Boolean
+    + sobrepoe(outroHorario): Boolean
+}
+
+class EscalaRelatorio <<ValueObject>> {
+    - mesReferencia: YearMonth
+    - totalAlocacoes: Integer
+    - distribuicaoPorColaborador: Map<Colaborador, Integer>
+    - distribuicaoPorSetor: Map<Setor, Integer>
+    - alocacoesPorData: Map<LocalDate, List<Alocacao>>
+    --
+    + gerarPDF(): byte[]
+    + gerarJSON(): String
+}
+
+' Enumerações
+enum DiaSemana {
+    DOMINGO
+    SEGUNDA
+    TERCA
+    QUARTA
+    QUINTA
+    SEXTA
+    SABADO
+}
+
+enum TipoColaborador {
+    ATIVO
+    RESERVA
+}
+
+enum StatusEscala {
+    RASCUNHO
+    GERADA
+    APROVADA
+    ARQUIVADA
+}
+
+enum PapelUsuario {
+    GESTOR
+    COLABORADOR
+}
+
+' Serviços
+class GeradorEscalaService <<Service>> {
+    --
+    + gerarEscala(mes, ano): Escala
+    - obterColaboradoresDisponiveis(culto): List<Colaborador>
+    - distribuirEquitativamente(colaboradores, cultos): Map
+    - evitarRepeticaoHorarios(colaborador, ultimasAlocacoes): Boolean
+    - validarRestricoesNegocio(escala): Boolean
+    - garantirCoberturaTotalCultos(): Boolean
+}
+
+class NotificacaoService <<Service>> {
+    --
+    + enviarEmailEscalaAprovada(escala)
+    + enviarEmailAlocacao(alocacao)
+    + enviarEmailAlteracaoEscala(alocacoesAlteradas)
+    - gerarConteudoEmail(alocacao): EmailContent
+    - gerarInviteCalendario(alocacao): ICalendar
+}
+
+class AutenticacaoService <<Service>> {
+    --
+    + autenticar(username, senha): Token
+    + validarToken(token): Usuario
+    + renovarToken(token): Token
+    + logout(token)
+}
+
+' Relacionamentos
+Colaborador "1" --> "*" HorarioDisponibilidade : possui
+Colaborador "*" --> "*" Setor : atua em
+Colaborador "1" --> "0..1" Usuario : tem
+Usuario --> PapelUsuario : possui
+
+Escala "1" --> "*" Alocacao : contém
+Escala --> StatusEscala : possui
+
+Alocacao "*" --> "1" Colaborador : aloca
+Alocacao "*" --> "1" Culto : para
+Alocacao "*" --> "1" Setor : no setor
+Alocacao "*" --> "1" Escala : pertence a
+
+Culto --> DiaSemana : ocorre em
+Colaborador --> TipoColaborador : é do tipo
+
+HorarioDisponibilidade --> DiaSemana : em
+
+GeradorEscalaService ..> Escala : cria
+GeradorEscalaService ..> Colaborador : usa
+GeradorEscalaService ..> Culto : usa
+GeradorEscalaService ..> Alocacao : cria
+
+NotificacaoService ..> Escala : notifica sobre
+NotificacaoService ..> Alocacao : notifica sobre
+NotificacaoService ..> Colaborador : envia para
+
+AutenticacaoService ..> Usuario : autentica
+
+note right of GeradorEscalaService
+  **Regras de Negócio:**
+  - Evitar repetição de horários entre semanas
+  - Distribuição equitativa mensal (~mesma quantidade)
+  - Considerar setores (Som e Projeção)
+  - Não deixar horários sem cobertura
+  - Respeitar disponibilidade dos colaboradores
+end note
+
+note right of Escala
+  **Estados possíveis:**
+  RASCUNHO -> GERADA -> APROVADA -> ARQUIVADA
+
+  Só pode ser aprovada se:
+  - Todos os cultos têm colaboradores
+  - Distribuição está equitativa
+  - Não há conflitos de disponibilidade
+end note
+
+note left of Colaborador
+  **Tipos:**
+  - ATIVO: prioridade na alocação
+  - RESERVA: usado quando necessário
+
+  Pode atuar em múltiplos setores
+end note
+
+@enduml
